@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>City Break - taste-matched short break finder</title>
+<style>
+  :root {
+    --bg: #0e1117; --panel: #171c26; --panel2: #1e2530; --line: #2a3342;
+    --text: #e8edf4; --muted: #93a1b5; --accent: #62d0a8; --accent2: #7aa7ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }
+  header h1 { font-size: 1.9rem; margin: 0 0 6px; }
+  header p { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+  label { display: block; font-weight: 600; margin-bottom: 8px; }
+  .hint { color: var(--muted); font-size: .85rem; font-weight: 400; }
+  input[type=text] {
+    width: 100%; padding: 12px 14px; font-size: 1rem; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--text);
+  }
+  button {
+    margin-top: 12px; padding: 12px 22px; font-size: 1rem; font-weight: 600;
+    border-radius: 8px; border: 0; background: var(--accent); color: #08281c; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: wait; }
+  .error { border-left: 3px solid #e5636f; padding: 10px 14px; background: #2a1d22; border-radius: 0 8px 8px 0; color: #f3c1c6; }
+  .dest-name { font-size: 1.6rem; margin: 0; }
+  .affinity { display: inline-block; background: var(--accent); color: #08281c; font-weight: 700;
+              border-radius: 999px; padding: 2px 12px; font-size: .9rem; margin-left: 8px; vertical-align: middle; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px;
+          padding: 4px 12px; font-size: .85rem; color: var(--muted); }
+  .chip b { color: var(--text); }
+  .venue { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .venue:first-child { border-top: 0; }
+  .venue .sub { color: var(--muted); font-size: .85rem; }
+  .score { color: var(--accent2); font-weight: 600; white-space: nowrap; }
+  .alts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); }
+  pre { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+        padding: 12px; overflow-x: auto; font-size: .8rem; }
+  footer { color: var(--muted); font-size: .8rem; margin-top: 28px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .warn { color: #e5c56b; font-size: .85rem; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>City Break</h1>
+    <p>Name a few things you love - an artist, a film, a dish - and the agent queries the
+       Qloo taste graph to find the short-break city that matches them, plus the venues inside it.</p>
+  </header>
+
+  <div class="card">
+    <label for="tastes">Your tastes
+      <span class="hint">- up to five, comma separated</span>
+    </label>
+    <input id="tastes" type="text" placeholder="e.g. Radiohead, Studio Ghibli, ramen, Almodovar films" autocomplete="off">
+    <button id="go">Find my city break</button>
+    <div id="status" class="warn" hidden></div>
+  </div>
+
+  <div id="error" class="card error" hidden></div>
+  <div id="result" hidden>
+    <div class="card">
+      <p class="dest-name"><span id="dest"></span><span id="aff" class="affinity" hidden></span></p>
+      <div id="ev" class="chips"></div>
+      <div id="warn" class="warn" hidden></div>
+    </div>
+    <div class="card" id="venues-card" hidden>
+      <label>Matched venues in <span id="dest2"></span></label>
+      <div id="venues"></div>
+    </div>
+    <div class="card" id="alts-card" hidden>
+      <label>Runner-up destinations</label>
+      <div id="alts" class="alts"></div>
+    </div>
+    <div class="card">
+      <details>
+        <summary>How this was built (agent tool trace)</summary>
+        <pre id="trace"></pre>
+      </details>
+    </div>
+  </div>
+
+  <footer id="prov">
+    Recommendations are generated from aggregate audience-affinity signals in the Qloo Insights API.
+    Scores describe cultural affinity between tastes and places at audience level - they are not
+    predictions about individuals, and venue lists reflect data coverage, not exhaustive directories.
+    No personal data is stored by this app.
+  </footer>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var btn = $("go");
+
+  function pct(v) { return (Math.round(v * 1000) / 10).toFixed(1) + "%"; }
+
+  function chips(container, evidence) {
+    container.innerHTML = "";
+    (evidence || []).forEach(function (e) {
+      var el = document.createElement("span");
+      el.className = "chip";
+      var name = (e.taste || "").split(":").pop();
+      el.innerHTML = "<b></b> " + (e.score != null ? pct(e.score) : "");
+      el.querySelector("b").textContent = name;
+      container.appendChild(el);
+    });
+  }
+
+  function show(obj) {
+    $("result").hidden = false;
+    $("dest").textContent = (obj.destination.name || "Unknown") +
+      (obj.destination.country ? ", " + obj.destination.country : "");
+    $("dest2").textContent = obj.destination.name || "the destination";
+    if (obj.destination.affinity != null) {
+      $("aff").hidden = false;
+      $("aff").textContent = "affinity " + pct(obj.destination.affinity);
+    }
+    chips($("ev"), obj.destination.evidence);
+    if (obj.warnings && obj.warnings.length) {
+      $("warn").hidden = false;
+      $("warn").textContent = obj.warnings.join(" - ");
+    }
+    var venues = $("venues");
+    venues.innerHTML = "";
+    (obj.venues || []).forEach(function (v) {
+      var row = document.createElement("div");
+      row.className = "venue";
+      var left = document.createElement("div");
+      var title = document.createElement("div");
+      title.textContent = v.name || "(unnamed venue)";
+      var sub = document.createElement("div");
+      sub.className = "sub";
+      sub.textContent = [v.subtype, v.address].filter(Boolean).join(" - ");
+      left.appendChild(title); left.appendChild(sub);
+      var right = document.createElement("div");
+      right.className = "score";
+      right.textContent = v.affinity != null ? pct(v.affinity) : "-";
+      row.appendChild(left); row.appendChild(right);
+      venues.appendChild(row);
+    });
+    $("venues-card").hidden = !(obj.venues || []).length;
+    var alts = $("alts");
+    alts.innerHTML = "";
+    (obj.alternatives || []).forEach(function (a) {
+      var el = document.createElement("span");
+      el.className = "chip";
+      el.innerHTML = "<b></b>";
+      el.querySelector("b").textContent = (a.name || "?") + (a.affinity != null ? " " + pct(a.affinity) : "");
+      alts.appendChild(el);
+    });
+    $("alts-card").hidden = !(obj.alternatives || []).length;
+    $("trace").textContent = JSON.stringify(obj.trace, null, 2);
+    $("prov").textContent = (obj.provenance && obj.provenance.note) || $("prov").textContent;
+  }
+
+  function fail(msg) {
+    $("error").hidden = false;
+    $("error").textContent = msg;
+  }
+
+  btn.addEventListener("click", function () {
+    $("error").hidden = true;
+    $("result").hidden = true;
+    $("status").hidden = false;
+    $("status").textContent = "Querying the taste graph...";
+    btn.disabled = true;
+    var tastes = $("tastes").value.split(",").map(function (s) { return s.trim(); })
+                   .filter(Boolean).slice(0, 5);
+    if (!tastes.length) {
+      $("status").hidden = true;
+      btn.disabled = false;
+      fail("Add at least one taste first - an artist, film, dish or brand you love.");
+      return;
+    }
+    fetch("/api/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tastes: tastes })
+    }).then(function (r) {
+      return r.json().then(function (data) { return { code: r.status, data: data }; });
+    }).then(function (res) {
+      $("status").hidden = true;
+      btn.disabled = false;
+      if (res.code !== 200) {
+        fail((res.data && (res.data.message || res.data.error)) || "Request failed (" + res.code + ").");
+        return;
+      }
+      show(res.data);
+    }).catch(function () {
+      $("status").hidden = true;
+      btn.disabled = false;
+      fail("Network error - the agent service did not respond.");
+    });
+  });
+
+  $("tastes").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { btn.click(); }
+  });
+})();
+</script>
+</body>
+</html>

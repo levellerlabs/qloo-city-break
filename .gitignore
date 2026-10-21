@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+qloo.env
+vercel.env
+.vercel
+.DS_Store
