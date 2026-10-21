@@ -58,6 +58,16 @@ API surface:
 | `/api/health` | GET | Liveness + whether the Qloo key is configured |
 | `/api/plan` | POST | `{"tastes": ["radiohead", "ramen"]}` -> destination, venues, evidence, trace |
 
+## Sample mode
+
+If the Qloo service is unreachable or not yet configured (key missing, upstream auth
+failure, rate limit or upstream error), the UI renders a clearly-labelled illustrative
+sample instead of a bare error, so the product stays explorable. The sample is
+unmistakably marked (every displayed name is labelled illustrative, entity URNs are
+`urn:sample:*`), and client-side validation errors never trigger it.
+`tests/test_frontend_contract.py` pins the sample shape, the labelling and the
+trigger scope.
+
 ## Data handling
 
 No personal data is collected, stored or sent to Qloo: requests contain only

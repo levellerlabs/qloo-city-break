@@ -49,6 +49,7 @@
         padding: 12px; overflow-x: auto; font-size: .8rem; }
   footer { color: var(--muted); font-size: .8rem; margin-top: 28px; border-top: 1px solid var(--line); padding-top: 14px; }
   .warn { color: #e5c56b; font-size: .85rem; margin-top: 8px; }
+  .samplenote { border-left: 3px solid #e5c56b; background: #26221a; color: #ecd9a0; }
 </style>
 </head>
 <body>
@@ -69,6 +70,7 @@
   </div>
 
   <div id="error" class="card error" hidden></div>
+  <div id="samplenote" class="card samplenote" hidden></div>
   <div id="result" hidden>
     <div class="card">
       <p class="dest-name"><span id="dest"></span><span id="aff" class="affinity" hidden></span></p>
@@ -103,6 +105,56 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var btn = $("go");
+
+  // Service-side failures fall back to a clearly-labelled illustrative sample so the
+  // product stays explorable when the Qloo connection is down or not yet configured.
+  // Client-side validation errors (bad input, no tastes resolved) never trigger it.
+  var SERVICE_ERRORS = ["qloo_key_not_configured", "upstream_auth", "upstream_rate_limited", "upstream_error"];
+  // Strict JSON (valid JS) so tooling can parse the shipped bytes directly.
+  var SAMPLE = {
+    "tastes": ["Radiohead", "Studio Ghibli", "ramen"],
+    "matched_inputs": [
+      { "taste": "Radiohead", "entity": "Radiohead", "urn": "urn:sample:radiohead", "type": "urn:entity:artist" },
+      { "taste": "Studio Ghibli", "entity": "Studio Ghibli", "urn": "urn:sample:studio-ghibli", "type": "urn:entity:movie" },
+      { "taste": "ramen", "entity": "Ramen", "urn": "urn:sample:ramen", "type": "urn:entity:place" }
+    ],
+    "destination": {
+      "name": "Sample City (illustrative)",
+      "country": "not a live result",
+      "affinity": 0.8123,
+      "evidence": [
+        { "taste": "urn:sample:radiohead", "score": 0.731 },
+        { "taste": "urn:sample:studio-ghibli", "score": 0.622 },
+        { "taste": "urn:sample:ramen", "score": 0.588 }
+      ]
+    },
+    "alternatives": [
+      { "name": "Sample Harbor (illustrative)", "country": "not a live result", "affinity": 0.7742 },
+      { "name": "Sample Old Town (illustrative)", "country": "not a live result", "affinity": 0.7401 }
+    ],
+    "venues": [
+      { "name": "Illustrative record shop bar", "subtype": "bar", "address": "1 Example Street", "affinity": 0.6902, "evidence": [] },
+      { "name": "Illustrative ramen counter", "subtype": "restaurant", "address": "2 Example Street", "affinity": 0.6551, "evidence": [] },
+      { "name": "Illustrative independent cinema", "subtype": "cinema", "address": "3 Example Street", "affinity": 0.6210, "evidence": [] }
+    ],
+    "warnings": ["Sample view: the data below is illustrative only. No live taste-graph query produced it."],
+    "trace": [
+      { "tool": "search", "params": { "query": "(sample mode - no live calls made)", "take": 0 }, "outcome": "skipped: Qloo API unavailable" },
+      { "tool": "insights", "params": { "filter.type": "urn:entity:locality", "interests": 0, "take": 0 }, "outcome": "skipped: Qloo API unavailable" }
+    ],
+    "provenance": {
+      "engine": "None (sample mode)",
+      "note": "This is a clearly-labelled illustrative sample shown because the Qloo service could not be reached. In live mode every number comes from the Qloo Insights API and ships with a per-plan agent tool trace."
+    }
+  };
+
+  function showSample(code, message) {
+    $("samplenote").hidden = false;
+    $("samplenote").textContent = "Sample view - live Qloo data is unavailable right now (" +
+      (message || code) + "). What you see below is illustrative content so you can still explore " +
+      "the product; it does not come from a live taste-graph call.";
+    show(SAMPLE);
+  }
 
   function pct(v) { return (Math.round(v * 1000) / 10).toFixed(1) + "%"; }
 
@@ -172,6 +224,7 @@
 
   btn.addEventListener("click", function () {
     $("error").hidden = true;
+    $("samplenote").hidden = true;
     $("result").hidden = true;
     $("status").hidden = false;
     $("status").textContent = "Querying the taste graph...";
@@ -194,6 +247,11 @@
       $("status").hidden = true;
       btn.disabled = false;
       if (res.code !== 200) {
+        var code = res.data && res.data.error;
+        if (SERVICE_ERRORS.indexOf(code) !== -1) {
+          showSample(code, res.data.message);
+          return;
+        }
         fail((res.data && (res.data.message || res.data.error)) || "Request failed (" + res.code + ").");
         return;
       }
