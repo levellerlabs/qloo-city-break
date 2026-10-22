@@ -140,6 +140,22 @@ class EntityShapeTest(unittest.TestCase):
         shaped = qloo_client._entity_shape(raw)
         self.assertEqual(shaped["explainability"]["entities"]["urn:entity:artist:1"], 0.42)
 
+    def test_live_api_entity_shape(self):
+        # regression pin: the live hackathon API carries entity_id (no urn/uuid),
+        # affinity under query, geocode under properties, geohash under location
+        raw = {"name": "Aviemore", "entity_id": "324A78BE-E5EA-4C0D-9DB1-EXAMPLE",
+               "type": "urn:entity",
+               "query": {"affinity": 0.8877},
+               "location": {"geohash": "gcuvz417r2w1"},
+               "properties": {"geocode": {"name": "Glasgow", "country_code": "GB"}}}
+        shaped = qloo_client._entity_shape(raw)
+        self.assertEqual(shaped["urn"], "324A78BE-E5EA-4C0D-9DB1-EXAMPLE")
+        self.assertEqual(shaped["uuid"], "324A78BE-E5EA-4C0D-9DB1-EXAMPLE")
+        self.assertEqual(shaped["affinity"], 0.8877)
+        self.assertEqual(shaped["geohash"], "gcuvz417r2w1")
+        self.assertEqual(shaped["country"], "GB")
+        self.assertEqual(shaped["city"], "Glasgow")
+
 
 if __name__ == "__main__":
     unittest.main()

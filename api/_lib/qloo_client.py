@@ -34,10 +34,15 @@ def _entity_shape(entity):
     """Normalise the fields the app needs out of a Qloo entity object.
 
     Tolerates both raw API entities and already-shaped dicts (idempotent).
+    Live hackathon API fields: entity_id, query.affinity, location.geohash,
+    properties.geocode.{name,country_code}. Synthetic/legacy urn-style
+    entities keep working via fallbacks.
     """
     props = entity.get("properties") or {}
-    urn = entity.get("urn") or props.get("urn") or ""
-    uuid = entity.get("uuid") or entity.get("id") or props.get("id") or ""
+    query = entity.get("query") if isinstance(entity.get("query"), dict) else {}
+    urn = entity.get("urn") or props.get("urn") or entity.get("entity_id") or ""
+    uuid = (entity.get("uuid") or entity.get("id") or entity.get("entity_id")
+            or props.get("id") or "")
     if not uuid and urn:
         tail = urn.rstrip("/").split(":")[-1]
         if tail and tail not in ("artist", "book", "brand", "locality", "movie",
@@ -45,11 +50,13 @@ def _entity_shape(entity):
             uuid = tail
     affinity = entity.get("affinity")
     if affinity is None:
+        affinity = query.get("affinity")
+    if affinity is None:
         affinity = props.get("affinity")
     explain = entity.get("explainability")
     if not explain:
-        query = entity.get("query")
-        explain = query.get("explainability") if isinstance(query, dict) else None
+        explain = query.get("explainability")
+    location = entity.get("location") if isinstance(entity.get("location"), dict) else {}
     geocode = props.get("geocode") or {}
     return {
         "name": entity.get("name") or props.get("name") or "",
@@ -58,9 +65,12 @@ def _entity_shape(entity):
         "type": entity.get("type") or (urn.split(":")[2] if urn.count(":") >= 2 else ""),
         "affinity": affinity,
         "subtype": entity.get("subtype") or props.get("subtype"),
-        "country": entity.get("country") or geocode.get("country") or props.get("country"),
+        "country": (entity.get("country") or geocode.get("country_code")
+                    or geocode.get("country") or props.get("country")),
         "city": entity.get("city") or geocode.get("name") or props.get("city"),
-        "address": entity.get("address") or props.get("address"),
+        "address": (entity.get("address") or props.get("address")
+                    or location.get("formatted_address")),
+        "geohash": location.get("geohash") or "",
         "explainability": explain,
     }
 
@@ -113,9 +123,14 @@ class QlooClient:
             if isinstance(last_err, QlooRateLimited):
                 raise QlooRateLimited("rate limited after %d attempts" % (self.max_retries + 1))
             raise QlooUnavailable("request failed after retries: %s" % last_err)
-        if not isinstance(data, dict) or not data.get("success"):
+        # /v2/insights carries success=true; /search omits the field entirely.
+        # Fail only on explicit failure or a payload with no results at all.
+        if not isinstance(data, dict) or data.get("success") is False:
             raise QlooError("unsuccessful payload from %s" % path)
-        return data.get("results") or {}
+        results = data.get("results")
+        if results is None:
+            raise QlooError("no results in payload from %s" % path)
+        return results
 
     @staticmethod
     def _pack_param(params, name, values, style):
@@ -129,21 +144,24 @@ class QlooClient:
         if types:
             self._pack_param(params, "types", types, STYLE_JOINED)
         results = self._get("/search", params)
-        entities = results.get("entities") or []
+        # /search returns results as a bare list; insights wraps in entities
+        entities = results if isinstance(results, list) else (results.get("entities") or [])
         if not entities and types:
             params["types"] = list(types)
             results = self._get("/search", params)
-            entities = results.get("entities") or []
+            entities = results if isinstance(results, list) else (results.get("entities") or [])
         return [_entity_shape(e) for e in entities]
 
     def insights(self, entity_type, interests=None, take=10, location=None,
-                 diversify_by=None, diversify_take=None):
+                 diversify_by=None, diversify_take=None, geohash=None):
         base = {
             "filter.type": entity_type,
             "take": take,
         }
         if location:
             base["filter.location"] = location
+        if geohash:
+            base["filter.location.geohash"] = geohash
         if diversify_by:
             base["diversify.by"] = diversify_by
         if diversify_take:

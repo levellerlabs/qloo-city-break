@@ -91,14 +91,15 @@ def plan_trip(client, tastes_raw):
                         "None of the given tastes matched a Qloo entity. Try well-known artists, films or dishes.")
     urns = [e["urn"] for e in resolved if e.get("urn")]
 
-    # Tool 2: destination shortlist (localities ranked by taste affinity).
+    # Tool 2: destination shortlist (cities ranked by taste affinity).
+    # Live API: urn:entity:destination is the supported type (urn:entity:locality
+    # is rejected); signal.interests.entities is required; comma-joined style.
     dest_entities, dest_raw, style = client.insights(
-        entity_type="urn:entity:locality", interests=urns, take=10,
-        diversify_by="properties.geocode.metro", diversify_take=2)
+        entity_type="urn:entity:destination", interests=urns, take=10)
     dest_entities = _shape_all(dest_entities)
-    trace.append({"tool": "insights", "params": {"filter.type": "urn:entity:locality",
+    trace.append({"tool": "insights", "params": {"filter.type": "urn:entity:destination",
                                                  "interests": len(urns), "take": 10},
-                  "outcome": "%d localities (param style: %s)" % (len(dest_entities), style)})
+                  "outcome": "%d destinations (param style: %s)" % (len(dest_entities), style)})
     if not dest_entities:
         raise PlanError("no_destinations",
                         "Qloo returned no destination affinities for those tastes. Try broader tastes.")
@@ -107,14 +108,16 @@ def plan_trip(client, tastes_raw):
     winner = ranked[0]
     alternatives = ranked[1:4]
 
-    # Tool 3: venues inside the winning locality.
-    location = winner.get("uuid") or None
+    # Tool 3: venues inside the winning destination, scoped by the winner's
+    # own geohash prefix (city-scale, ~5km cell) - filter.location needs a
+    # locality ID, which destination results do not carry.
+    winner_geohash = (winner.get("geohash") or "")[:5] or None
     venue_entities, _venue_raw, _vstyle = client.insights(
         entity_type="urn:entity:place", interests=urns, take=12,
-        location=location, diversify_by="subtype", diversify_take=4)
+        geohash=winner_geohash)
     venue_entities = _shape_all(venue_entities)
     trace.append({"tool": "insights", "params": {"filter.type": "urn:entity:place",
-                                                 "location": location or "(none)", "take": 12},
+                                                 "geohash": winner_geohash or "(none)", "take": 12},
                   "outcome": "%d venues" % len(venue_entities)})
 
     venues = [{
